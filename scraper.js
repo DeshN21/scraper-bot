@@ -18,8 +18,11 @@ const db = getFirestore(app);
 const BRANDS = ["Apple", "Samsung", "Xiaomi", "Vivo", "Oppo", "Nokia", "Realme", "Huawei", "Honor", "OnePlus"];
 const MAX_PAGES = 5;
 
+// Helper to wait
+const delay = ms => new Promise(res => setTimeout(res, ms));
+
 async function scrapePhones() {
-  console.log("Starting Advanced Real Data Scraper Bot...");
+  console.log("Starting Advanced Real-Time Scraper Bot (with ACTUAL stores)...");
   const phones = [];
   const phoneIds = new Set();
   
@@ -37,7 +40,7 @@ async function scrapePhones() {
         const response = await fetch(url);
         if(!response.ok) {
           if (page === 1) console.log(` Failed to fetch ${brand}`);
-          break; // Stop paginating if 404
+          break;
         }
         
         const html = await response.text();
@@ -45,7 +48,9 @@ async function scrapePhones() {
         
         let foundOnPage = 0;
         
-        $('a').each((i, el) => {
+        // Use a standard for loop to allow async detail fetching
+        const links = $('a').toArray();
+        for (const el of links) {
           const title = $(el).text().trim();
           const href = $(el).attr('href');
           
@@ -56,11 +61,10 @@ async function scrapePhones() {
             let img = parent.find('img').attr('src');
             if (!img) img = $(el).closest('.product, .item, .col-xs-12').find('img').attr('src');
             
-            const priceMatch = parentText.match(/Rs\.\s*([\d,]+)(?:\s*at\s*(\d+)\s*stores)?/);
+            const priceMatch = parentText.match(/Rs\.\s*([\d,]+)/);
             
             if (priceMatch) {
-              const minPrice = parseInt(priceMatch[1].replace(/,/g, ''));
-              const storeCount = priceMatch[2] ? parseInt(priceMatch[2]) : Math.floor(Math.random() * 5) + 1;
+              let minPrice = parseInt(priceMatch[1].replace(/,/g, ''));
               const id = title.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
               
               if (!phoneIds.has(id) && minPrice > 0) {
@@ -74,45 +78,73 @@ async function scrapePhones() {
                   finalImage = `https://fdn2.gsmarena.com/vv/bigpic/${title.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase()}.jpg`;
                 }
                 
-                const stores = [];
-                const storeNames = ["Greenware", "Dialcom", "iDealz", "Celltronics", "Life Mobile", "Smart Mobile", "Doctor Mobile", "TechZone"];
-                const selectedStoreNames = storeNames.sort(() => 0.5 - Math.random()).slice(0, Math.min(storeCount, 4));
+                const detailLink = href.startsWith('http') ? href : `https://www.ideabeam.com${href}`;
                 
-                selectedStoreNames.forEach((sName, index) => {
-                  stores.push({
-                    id: `s${index+1}`,
-                    name: sName,
-                    price: minPrice + (index * 1500),
-                    warranty: index % 2 === 0 ? "1 Year Company Warranty" : "6 Months Shop Warranty",
-                    address: "Colombo, Sri Lanka",
-                    contact: "077 123 4567"
+                // Fetch REAL stores from detail page
+                let realStores = [];
+                try {
+                  await delay(200); // polite delay
+                  const detailRes = await fetch(detailLink);
+                  if (detailRes.ok) {
+                    const detailHtml = await detailRes.text();
+                    const $detail = cheerio.load(detailHtml);
+                    
+                    $detail('tr').each((i, rowEl) => {
+                      const text = $detail(rowEl).text().trim().replace(/\s+/g, ' ');
+                      if (text.includes('Rs.')) {
+                        const parts = text.split('Rs.');
+                        const storeName = parts[0].trim();
+                        const priceText = parts[1].trim();
+                        const storePrice = parseInt(priceText.replace(/[^0-9]/g, '')) || 0;
+                        
+                        if (storeName && storePrice > 0 && storeName.length < 25 && storeName !== "Price" && !storeName.includes("Warranty")) {
+                          realStores.push({
+                            id: storeName.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase() + '-' + i,
+                            name: storeName,
+                            price: storePrice,
+                            warranty: "Check Store",
+                            address: "Sri Lanka",
+                            contact: "Check Store"
+                          });
+                        }
+                      }
+                    });
+                  }
+                } catch(e) {
+                  console.log(`Failed to fetch details for ${title}`);
+                }
+                
+                // Recalculate true minPrice from real stores if they exist
+                if (realStores.length > 0) {
+                  minPrice = Math.min(...realStores.map(s => s.price));
+                }
+                
+                // Only save phones that actually have stores
+                if (realStores.length > 0) {
+                  phones.push({
+                    id: id,
+                    name: title,
+                    brand: brand,
+                    minPrice: minPrice,
+                    imageUrl: finalImage,
+                    storeCount: realStores.length,
+                    detailLink: detailLink,
+                    specs: { ram: "Varies", storage: "Varies", battery: "Standard", display: "Standard" },
+                    stores: realStores
                   });
-                });
-
-                phones.push({
-                  id: id,
-                  name: title,
-                  brand: brand,
-                  minPrice: minPrice,
-                  imageUrl: finalImage,
-                  storeCount: storeCount,
-                  detailLink: href.startsWith('http') ? href : `https://www.ideabeam.com${href}`,
-                  specs: { ram: "Varies", storage: "Varies", battery: "Standard", display: "Standard" },
-                  stores: stores
-                });
+                }
               }
             }
           }
-        });
+        }
         
-        // If we didn't find any new phones on this page, probably reached the end
         if (foundOnPage === 0 && page > 1) {
           break;
         }
       }
     }
 
-    console.log(`\nSuccessfully scraped ${phones.length} real phones from Ideabeam! Saving to Firebase...`);
+    console.log(`\nSuccessfully scraped ${phones.length} real phones with ACTUAL STORES! Saving to Firebase...`);
     
     let promises = [];
     let count = 0;
@@ -132,7 +164,7 @@ async function scrapePhones() {
       await Promise.all(promises);
     }
     
-    console.log(`Successfully updated live database with ${phones.length} REAL DATA items!`);
+    console.log(`Successfully updated live database with ${phones.length} REAL DATA items (with actual stores)!`);
     process.exit(0);
     
   } catch (error) {
