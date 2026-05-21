@@ -21,10 +21,48 @@ const MAX_PAGES = 5;
 // Helper to wait
 const delay = ms => new Promise(res => setTimeout(res, ms));
 
+async function scrapeCelltronics() {
+  console.log("Scraping direct live prices from Celltronics.lk...");
+  const celltronicsPhones = [];
+  
+  try {
+    for (const brand of ["apple", "samsung", "xiaomi"]) {
+      const res = await fetch(`https://celltronics.lk/product-category/mobile-phones/${brand}/`);
+      if (res.ok) {
+        const html = await res.text();
+        const $ = cheerio.load(html);
+        
+        $('.product').each((i, el) => {
+          const name = $(el).find('.woocommerce-loop-product__title').text().trim() || $(el).find('h2, h3').text().trim();
+          let priceText = $(el).find('.price ins').text().trim(); // current price if discounted
+          if (!priceText) priceText = $(el).find('.price').text().trim();
+          
+          if (priceText) {
+            const price = parseInt(priceText.replace(/[^0-9]/g, '')) || 0;
+            if (name && price > 0) {
+              celltronicsPhones.push({
+                name: name.replace(/\s+/g, ' ').trim(),
+                price: price
+              });
+            }
+          }
+        });
+      }
+    }
+  } catch (e) {
+    console.log("Celltronics fetch failed", e);
+  }
+  return celltronicsPhones;
+}
+
 async function scrapePhones() {
-  console.log("Starting Advanced Real-Time Scraper Bot (with ACTUAL stores)...");
+  console.log("Starting Advanced Real-Time Scraper Bot...");
   const phones = [];
   const phoneIds = new Set();
+  
+  // 1. Get highly accurate direct shop prices
+  const celltronicsData = await scrapeCelltronics();
+  console.log(`Successfully scraped ${celltronicsData.length} LIVE accurate prices from Celltronics!`);
   
   try {
     for (const brand of BRANDS) {
@@ -48,7 +86,6 @@ async function scrapePhones() {
         
         let foundOnPage = 0;
         
-        // Use a standard for loop to allow async detail fetching
         const links = $('a').toArray();
         for (const el of links) {
           const title = $(el).text().trim();
@@ -83,7 +120,7 @@ async function scrapePhones() {
                 // Fetch REAL stores from detail page
                 let realStores = [];
                 try {
-                  await delay(200); // polite delay
+                  await delay(100); 
                   const detailRes = await fetch(detailLink);
                   if (detailRes.ok) {
                     const detailHtml = await detailRes.text();
@@ -114,12 +151,36 @@ async function scrapePhones() {
                   console.log(`Failed to fetch details for ${title}`);
                 }
                 
-                // Recalculate true minPrice from real stores if they exist
+                // ---- DIRECT SHOP OVERRIDE LOGIC ----
+                // We cross-check with Celltronics direct data to fix Ideabeam's wrong prices
+                let overrideApplied = false;
+                for (const cellData of celltronicsData) {
+                  // If Celltronics phone name includes our base phone title (e.g. "Samsung Galaxy A56 12GB" includes "Samsung Galaxy A56")
+                  if (cellData.name.toLowerCase().includes(title.toLowerCase())) {
+                    // Update or add Celltronics to the stores list with the 100% ACCURATE price
+                    const existingCell = realStores.find(s => s.name.toLowerCase().includes("celltronics"));
+                    if (existingCell) {
+                      existingCell.price = cellData.price;
+                      existingCell.name = "Celltronics (" + cellData.name + ")";
+                    } else {
+                      realStores.push({
+                        id: 'celltronics-direct',
+                        name: "Celltronics (" + cellData.name + ")",
+                        price: cellData.price,
+                        warranty: "Company Warranty",
+                        address: "Colombo",
+                        contact: "Verified Live Price"
+                      });
+                    }
+                    overrideApplied = true;
+                  }
+                }
+                
+                // Recalculate true minPrice from real stores
                 if (realStores.length > 0) {
                   minPrice = Math.min(...realStores.map(s => s.price));
                 }
                 
-                // Only save phones that actually have stores
                 if (realStores.length > 0) {
                   phones.push({
                     id: id,
@@ -144,7 +205,7 @@ async function scrapePhones() {
       }
     }
 
-    console.log(`\nSuccessfully scraped ${phones.length} real phones with ACTUAL STORES! Saving to Firebase...`);
+    console.log(`\nSuccessfully scraped ${phones.length} phones! Saving to Firebase...`);
     
     let promises = [];
     let count = 0;
@@ -164,7 +225,7 @@ async function scrapePhones() {
       await Promise.all(promises);
     }
     
-    console.log(`Successfully updated live database with ${phones.length} REAL DATA items (with actual stores)!`);
+    console.log(`Successfully updated live database!`);
     process.exit(0);
     
   } catch (error) {
