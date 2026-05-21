@@ -54,7 +54,7 @@ async function scrapePhones() {
           const title = $(el).text().trim();
           const href = $(el).attr('href');
           
-          if (title && title !== "View details »" && href && href.endsWith('-price.html')) {
+          if (title && title.toLowerCase().includes(brand.toLowerCase()) && title !== "View details »" && href && href.endsWith('-price.html')) {
             const parent = $(el).parent().parent();
             const parentText = parent.text().replace(/\s+/g, ' ');
             
