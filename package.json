@@ -1,0 +1,14 @@
+{
+  "name": "scraper-bot",
+  "version": "1.0.0",
+  "description": "PhonePrice.lk auto scraper",
+  "main": "scraper.js",
+  "type": "module",
+  "scripts": {
+    "start": "node scraper.js"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.12",
+    "firebase": "^10.8.0"
+  }
+}
