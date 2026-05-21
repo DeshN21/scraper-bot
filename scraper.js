@@ -58,6 +58,7 @@ async function scrapePhones() {
             { id: "s4", name: "Celltronics", price: minPrice + 500, warranty: "6 Months", address: "Bambalapitiya", contact: "011 250 8888" }
           ]
         });
+      }
     });
 
     if (phones.length === 0) {
